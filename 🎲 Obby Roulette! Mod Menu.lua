@@ -1,5 +1,9 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
+if not game:IsLoaded() then 
+    game.Loaded:wait()
+end
+
 local Window = Rayfield:CreateWindow({
     Name = "🎲 Obby Roulette! Mod Menu",
     LoadingTitle = "Loading 🎲 Obby Roulette",
@@ -13,7 +17,8 @@ local Window = Rayfield:CreateWindow({
 })
 
 local MainTab = Window:CreateTab("Main", 4483362458)
-local MusicTab = Window:CreateTab("🎵 Music", 6026568198)
+local MusicTab = Window:CreateTab("Music", "boom-box")
+local VisualTab = Window:CreateTab("Visual", "eye")
 
 -- ==================== VARIABLES ====================
 local legitAutoFarmEnabled = false
@@ -55,6 +60,23 @@ local currentAudioId = 0
 local musicVolume = 1
 local musicLooped = false
 local musicStartTimeValue = 0
+
+
+-- for visual tab
+local function GetTag()
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    local Name = LocalPlayer.Name
+    local Character = workspace:WaitForChild(Name)
+    local Label = Character:WaitForChild("Head"):WaitForChild("CosmeticTag"):WaitForChild("TextLabel")
+    return Label
+end
+local TagLabel = GetTag()
+
+local Fonts = {}
+for _, font in ipairs(Enum.Font:GetEnumItems()) do
+    table.insert(Fonts, font.Name)
+end
 
 -- ==================== HELPERS ====================
 local function findWinpad()
@@ -840,6 +862,37 @@ MusicTab:CreateButton({
         else
             Rayfield:Notify({Title = "Music", Content = "Nothing playing right now", Duration = 3})
         end
+    end,
+})
+
+local TagInput = VisualTab:CreateInput({
+    Name = "Custom Tag",
+    CurrentValue = "",
+    PlaceholderText = "Tag Text",
+    RemoveTextAfterFocusLost = false,
+    Flag = "TagText",
+    Callback = function(Text)
+        TagLabel.Text = Text
+    end,
+})
+
+local TagColorPicker = VisualTab:CreateColorPicker({
+    Name = "Tag Color",
+    Color = Color3.fromRGB(nil, nil, nil),
+    Flag = "TagColorPicker",
+    Callback = function(Value)
+        TagLabel.TextColor3 = Value
+    end,
+})
+
+local Dropdown = VisualTab:CreateDropdown({
+    Name = "Fonts",
+    Options = Fonts,
+    CurrentOption = {},
+    MultipleOptions = false,
+    Flag = "FontDropdown",
+    Callback = function(Options)
+        TagLabel.Font = Enum.Font[Options[1]]
     end,
 })
 
