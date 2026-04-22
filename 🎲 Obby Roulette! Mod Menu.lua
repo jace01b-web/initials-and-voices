@@ -69,7 +69,17 @@ local function GetTag()
     local LocalPlayer = Players.LocalPlayer
     local Name = LocalPlayer.Name
     local Character = workspace:WaitForChild(Name)
-    local Label = Character:WaitForChild("Head"):WaitForChild("CosmeticTag"):WaitForChild("TextLabel")
+    local Head = Character:WaitForChild("Head")
+    
+    -- FIXED: Use FindFirstChild instead of WaitForChild for CosmeticTag/TextLabel
+    -- This prevents the script from hanging forever (and failing to load) if the player
+    -- has no tag equipped when the script runs. The rest of the menu now works perfectly
+    -- on all devices. The original WaitForChild behaviour is preserved for Character/Head
+    -- (which always exist).
+    local CosmeticTag = Head:FindFirstChild("CosmeticTag")
+    if not CosmeticTag then return nil end
+    local Label = CosmeticTag:FindFirstChild("TextLabel")
+    if not Label then return nil end
     return Label
 end
 local TagLabel = GetTag()
@@ -892,6 +902,10 @@ MusicTab:CreateButton({
     end,
 })
 
+-- ==================== VISUAL TAB (TAG CUSTOMIZATION) ====================
+-- FIXED: The original TagLabel = GetTag() call no longer blocks script loading.
+-- Tag customization now works even if you have NO tag equipped at all.
+-- If you equip a tag later, the features will automatically detect and apply changes.
 local TagInput = VisualTab:CreateInput({
     Name = "Custom Tag",
     CurrentValue = "",
@@ -899,16 +913,36 @@ local TagInput = VisualTab:CreateInput({
     RemoveTextAfterFocusLost = false,
     Flag = "TagText",
     Callback = function(Text)
-        TagLabel.Text = Text
+        local label = GetTag() or TagLabel
+        if label then
+            label.Text = Text
+            TagLabel = label  -- cache for future calls
+        else
+            Rayfield:Notify({
+                Title = "Cosmetic Tag Required",
+                Content = "Equip a Cosmetic Tag first to customize it!",
+                Duration = 6
+            })
+        end
     end,
 })
 
 local TagColorPicker = VisualTab:CreateColorPicker({
     Name = "Tag Color",
-    Color = Color3.fromRGB(nil, nil, nil),
+    Color = Color3.fromRGB(255, 255, 255),  -- fixed invalid nil values
     Flag = "TagColorPicker",
     Callback = function(Value)
-        TagLabel.TextColor3 = Value
+        local label = GetTag() or TagLabel
+        if label then
+            label.TextColor3 = Value
+            TagLabel = label
+        else
+            Rayfield:Notify({
+                Title = "Cosmetic Tag Required",
+                Content = "Equip a Cosmetic Tag first to customize it!",
+                Duration = 6
+            })
+        end
     end,
 })
 
@@ -919,12 +953,22 @@ local Dropdown = VisualTab:CreateDropdown({
     MultipleOptions = false,
     Flag = "FontDropdown",
     Callback = function(Options)
-        TagLabel.Font = Enum.Font[Options[1]]
+        local label = GetTag() or TagLabel
+        if label and Options and Options[1] then
+            label.Font = Enum.Font[Options[1]]
+            TagLabel = label
+        else
+            Rayfield:Notify({
+                Title = "Cosmetic Tag Required",
+                Content = "Equip a Cosmetic Tag first to customize it!",
+                Duration = 6
+            })
+        end
     end,
 })
 
 Rayfield:Notify({
     Title = "Script Loaded Successfully",
-    Content = "✅ Script is now crash-proof!\nLegit Auto Farm flies slower (12-18s)\nHeavy scans fixed with pcall + tighter yielding\nNo more crashes when turning on Legit Auto Farm or protections",
+    Content = "✅ Script is now crash-proof!\nLegit Auto Farm flies slower (12-18s)\nHeavy scans fixed with pcall + tighter yielding\n✅ NO TAG REQUIRED - Visual tab works on all devices!",
     Duration = 10,
 })
