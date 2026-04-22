@@ -25,6 +25,7 @@ local legitAutoFarmEnabled = false
 local antiKillEnabled = false
 local antiDamageEnabled = false
 local espEnabled = false
+local noclipEnabled = false  -- added for clean code (was missing before)
 
 local currentPlatform = nil
 local lastWinpad = nil
@@ -63,7 +64,13 @@ local musicVolume = 1
 local musicLooped = false
 local musicStartTimeValue = 0
 
--- for visual tab
+-- ==================== CUSTOM TAG PERSISTENCE (FULLY FIXED) ====================
+-- These variables store your custom tag settings so they survive death/respawn
+-- AND automatically apply when you equip a tag later
+local customTagText = nil
+local customTagColor = nil
+local customTagFontName = nil
+
 local function GetTag()
     local Players = game:GetService("Players")
     local LocalPlayer = Players.LocalPlayer
@@ -71,18 +78,65 @@ local function GetTag()
     local Character = workspace:WaitForChild(Name)
     local Head = Character:WaitForChild("Head")
     
-    -- FIXED: Use FindFirstChild instead of WaitForChild for CosmeticTag/TextLabel
-    -- This prevents the script from hanging forever (and failing to load) if the player
-    -- has no tag equipped when the script runs. The rest of the menu now works perfectly
-    -- on all devices. The original WaitForChild behaviour is preserved for Character/Head
-    -- (which always exist).
+    -- Safe FindFirstChild (no blocking)
     local CosmeticTag = Head:FindFirstChild("CosmeticTag")
     if not CosmeticTag then return nil end
     local Label = CosmeticTag:FindFirstChild("TextLabel")
     if not Label then return nil end
     return Label
 end
-local TagLabel = GetTag()
+
+local function applyCustomTag()
+    local label = GetTag()
+    if not label then return end
+    
+    -- Re-apply whatever the player last set through the menu
+    if customTagText ~= nil then
+        label.Text = customTagText
+    end
+    if customTagColor ~= nil then
+        label.TextColor3 = customTagColor
+    end
+    if customTagFontName ~= nil then
+        pcall(function()
+            label.Font = Enum.Font[customTagFontName]
+        end)
+    end
+end
+
+-- Monitor for when a CosmeticTag is equipped (works even if you set custom tag BEFORE equipping one)
+local function setupTagMonitor(character)
+    if not character then return end
+    
+    local head = character:FindFirstChild("Head")
+    if not head then
+        head = character:WaitForChild("Head")
+    end
+    
+    -- Listen for CosmeticTag being added (when player equips a tag)
+    head.DescendantAdded:Connect(function(descendant)
+        if descendant.Name == "CosmeticTag" then
+            task.wait(0.5) -- Roblox needs a tiny moment to create the TextLabel
+            applyCustomTag()
+        end
+    end)
+    
+    -- Also check immediately in case the tag is already equipped
+    task.spawn(applyCustomTag)
+end
+
+local LocalPlayer = game.Players.LocalPlayer
+
+-- Setup for current character (if already loaded)
+if LocalPlayer.Character then
+    setupTagMonitor(LocalPlayer.Character)
+end
+
+-- Setup for every respawn + auto-apply when tag is equipped later
+LocalPlayer.CharacterAdded:Connect(function(character)
+    task.wait(1) -- let character fully load
+    setupTagMonitor(character)
+end)
 
 local Fonts = {}
 for _, font in ipairs(Enum.Font:GetEnumItems()) do
@@ -173,10 +227,10 @@ local function disableAllHazards()
         local character = game.Players.LocalPlayer.Character
         local descendants = workspace:GetDescendants()
         for i, obj in ipairs(descendants) do
-            if i % 25 == 0 then task.wait() end  -- tighter batch = safer, no crash
+            if i % 25 == 0 then task.wait() end
             if obj:IsA("BasePart") and obj.Name ~= "winpad" then
                 if character and obj:IsDescendantOf(character) then continue end
-                pcall(function()  -- pcall prevents any single bad part from crashing
+                pcall(function()
                     obj.CanTouch = false
                     local ti = obj:FindFirstChild("TouchInterest")
                     if ti then ti:Destroy() end
@@ -217,7 +271,7 @@ local function disableWorldCollision()
         local character = game.Players.LocalPlayer.Character
         local descendants = workspace:GetDescendants()
         for i, obj in ipairs(descendants) do
-            if i % 25 == 0 then task.wait() end  -- tighter batch = safer, no crash
+            if i % 25 == 0 then task.wait() end
             if obj:IsA("BasePart") and obj.Name ~= "winpad" then
                 if character and obj:IsDescendantOf(character) then continue end
                 if originalWorldCanCollide[obj] == nil then
@@ -312,7 +366,7 @@ local function stopAntiAFK()
     lastAntiAFKTime = 0
 end
 
--- ==================== UPDATED LEGIT AUTO FARM (CRASH-PROOF + SLOWER FLY) ====================
+-- ==================== UPDATED LEGIT AUTO FARM ====================
 local function smoothFlyToWinpad(winpad)
     local character = game.Players.LocalPlayer.Character
     if not character or not character:FindFirstChild("HumanoidRootPart") then return end
@@ -329,7 +383,7 @@ local function smoothFlyToWinpad(winpad)
     local startPos = root.Position
     local startTime = tick()
     
-    local flyDuration = 12 + math.random() * 6  -- 12-18s (~15s avg)
+    local flyDuration = 12 + math.random() * 6
 
     local bv = Instance.new("BodyVelocity")
     bv.Name = "LegitAutoFarm_BV"
@@ -369,7 +423,7 @@ local function smoothFlyToWinpad(winpad)
             return
         end
 
-        pcall(function()  -- extra safety so fly loop never crashes the script
+        pcall(function()
             local currentPos = root.Position
             local distToTarget = (currentPos - targetPos).Magnitude
 
@@ -717,7 +771,7 @@ MainTab:CreateToggle({
     Callback = function(Value)
         legitAutoFarmEnabled = Value
         if Value then
-            if not noclipConnection then
+            if not noclipEnabled then
                 startNoclip()
             end
             startLegitAutoFarm()
@@ -902,10 +956,7 @@ MusicTab:CreateButton({
     end,
 })
 
--- ==================== VISUAL TAB (TAG CUSTOMIZATION) ====================
--- FIXED: The original TagLabel = GetTag() call no longer blocks script loading.
--- Tag customization now works even if you have NO tag equipped at all.
--- If you equip a tag later, the features will automatically detect and apply changes.
+-- ==================== VISUAL TAB - CUSTOM TAG (NOW FULLY AUTO-APPLIES) ====================
 local TagInput = VisualTab:CreateInput({
     Name = "Custom Tag",
     CurrentValue = "",
@@ -913,36 +964,18 @@ local TagInput = VisualTab:CreateInput({
     RemoveTextAfterFocusLost = false,
     Flag = "TagText",
     Callback = function(Text)
-        local label = GetTag() or TagLabel
-        if label then
-            label.Text = Text
-            TagLabel = label  -- cache for future calls
-        else
-            Rayfield:Notify({
-                Title = "Cosmetic Tag Required",
-                Content = "Equip a Cosmetic Tag first to customize it!",
-                Duration = 6
-            })
-        end
+        customTagText = Text
+        applyCustomTag()
     end,
 })
 
 local TagColorPicker = VisualTab:CreateColorPicker({
     Name = "Tag Color",
-    Color = Color3.fromRGB(255, 255, 255),  -- fixed invalid nil values
+    Color = Color3.fromRGB(255, 255, 255),
     Flag = "TagColorPicker",
     Callback = function(Value)
-        local label = GetTag() or TagLabel
-        if label then
-            label.TextColor3 = Value
-            TagLabel = label
-        else
-            Rayfield:Notify({
-                Title = "Cosmetic Tag Required",
-                Content = "Equip a Cosmetic Tag first to customize it!",
-                Duration = 6
-            })
-        end
+        customTagColor = Value
+        applyCustomTag()
     end,
 })
 
@@ -953,22 +986,17 @@ local Dropdown = VisualTab:CreateDropdown({
     MultipleOptions = false,
     Flag = "FontDropdown",
     Callback = function(Options)
-        local label = GetTag() or TagLabel
-        if label and Options and Options[1] then
-            label.Font = Enum.Font[Options[1]]
-            TagLabel = label
-        else
-            Rayfield:Notify({
-                Title = "Cosmetic Tag Required",
-                Content = "Equip a Cosmetic Tag first to customize it!",
-                Duration = 6
-            })
+        if Options and Options[1] then
+            customTagFontName = Options[1]
+            applyCustomTag()
         end
     end,
 })
 
+VisualTab:CreateSection("Note: You need a tag equipped to use custom tag")
+
 Rayfield:Notify({
     Title = "Script Loaded Successfully",
-    Content = "✅ Script is now crash-proof!\nLegit Auto Farm flies slower (12-18s)\nHeavy scans fixed with pcall + tighter yielding\n✅ NO TAG REQUIRED - Visual tab works on all devices!",
+    Content = "✅ Script is now crash-proof!\nLegit Auto Farm flies slower (12-18s)\n✅ Custom Tag now FULLY auto-applies when you equip a tag (even if you edited before equipping)\n✅ Persists across deaths/respawns",
     Duration = 10,
 })
