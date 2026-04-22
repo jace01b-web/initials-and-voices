@@ -6,7 +6,7 @@ local Window = Rayfield:CreateWindow({
     LoadingSubtitle = "by InitialsAndVoices",
     ConfigurationSaving = {
         Enabled = true,
-        FolderName = "GrokScripts",
+        FolderName = "InitialsScripts",
         FileName = "WinpadAutoConfig"
     },
     KeySystem = false,
