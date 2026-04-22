@@ -51,6 +51,8 @@ local worldNoclipConnection = nil
 local WAITING_POS = Vector3.new(500, -500, 500)
 local SAFE_POS = Vector3.new(-171, 250, 28)
 
+local WalkSpeedValue = 16
+
 -- NOCLIP WORLD STATE
 local originalWorldCanCollide = {}
 
@@ -60,7 +62,6 @@ local currentAudioId = 0
 local musicVolume = 1
 local musicLooped = false
 local musicStartTimeValue = 0
-
 
 -- for visual tab
 local function GetTag()
@@ -674,6 +675,19 @@ local function stopESP()
     removeAllESP()
 end
 
+task.spawn(function()
+    while true do
+        task.wait(0.2)
+        local Players = game:GetService("Players")
+        local LocalPlayer = Players.LocalPlayer
+        local Character = LocalPlayer.Character
+        local Humanoid = Character and Character:FindFirstChild("Humanoid")
+        if Humanoid then
+            Humanoid.WalkSpeed = WalkSpeedValue
+        end
+    end
+end)
+
 -- ==================== UI ====================
 MainTab:CreateSection("Winpad Features")
 
@@ -737,6 +751,19 @@ MainTab:CreateToggle({
             stopAntiDamage()
             Rayfield:Notify({Title = "Anti Damage DISABLED", Content = "Damage protection off", Duration = 4})
         end
+    end,
+})
+
+MainTab:CreateSection("Player")
+
+local WalkSpeedSlider = MainTab:CreateSlider({
+    Name = "Walk Speed",
+    Range = {16, 100},
+    Increment = 1,
+    CurrentValue = 16,
+    Flag = "Walk Speed Slider", 
+    Callback = function(Value)
+        WalkSpeedValue = Value
     end,
 })
 
