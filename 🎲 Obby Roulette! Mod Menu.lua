@@ -7,7 +7,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "🎲 Obby Roulette! Mod Menu",
     LoadingTitle = "Loading 🎲 Obby Roulette",
-    LoadingSubtitle = "by InitialsAndVoices",
+    LoadingSubtitle = "by InitialsAndVoices and miffy",
     ConfigurationSaving = {
         Enabled = true,
         FolderName = "InitialsScripts",
