@@ -758,7 +758,7 @@ MainTab:CreateSection("Player")
 
 local WalkSpeedSlider = MainTab:CreateSlider({
     Name = "Walk Speed",
-    Range = {16, 100},
+    Range = {16, 50},
     Increment = 1,
     CurrentValue = 16,
     Flag = "Walk Speed Slider", 
