@@ -21,41 +21,20 @@ local MusicTab = Window:CreateTab("Music", "boom-box")
 local VisualTab = Window:CreateTab("Visual", "eye")
 
 -- ==================== VARIABLES ====================
-local legitAutoFarmEnabled = false
+local invisAutoFarmEnabled = false
 local antiKillEnabled = false
-local antiDamageEnabled = false
 local espEnabled = false
-local noclipEnabled = false  -- added for clean code (was missing before)
-
-local currentPlatform = nil
-local lastWinpad = nil
-local currentWinpad = nil
-local winpadRemoveConnection = nil
-local lastSafeCheckTime = 0
 
 local winpadHighlights = {}
 
 local antiKillConnection = nil
-local antiDamageConnection = nil
-local legitConnection = nil
-local legitFlyConnection = nil
-local legitIdleConnection = nil
 local espConnection = nil
 local antiAFKConnection = nil
 local lastAntiAFKTime = 0
 
 local fullProtectionConnection = nil
-local deathResetConnection = nil
-local noclipConnection = nil
-local worldNoclipConnection = nil
-
-local WAITING_POS = Vector3.new(500, -500, 500)
-local SAFE_POS = Vector3.new(-171, 250, 28)
 
 local WalkSpeedValue = 16
-
--- NOCLIP WORLD STATE
-local originalWorldCanCollide = {}
 
 -- ==================== MUSIC PLAYER VARIABLES ====================
 local musicSound = nil
@@ -64,21 +43,16 @@ local musicVolume = 1
 local musicLooped = false
 local musicStartTimeValue = 0
 
--- ==================== CUSTOM TAG PERSISTENCE (FULLY FIXED) ====================
--- These variables store your custom tag settings so they survive death/respawn
--- AND automatically apply when you equip a tag later
+-- ==================== CUSTOM TAG PERSISTENCE ====================
 local customTagText = nil
 local customTagColor = nil
 local customTagFontName = nil
 
+local LocalPlayer = game.Players.LocalPlayer
+
 local function GetTag()
-    local Players = game:GetService("Players")
-    local LocalPlayer = Players.LocalPlayer
-    local Name = LocalPlayer.Name
-    local Character = workspace:WaitForChild(Name)
+    local Character = workspace:WaitForChild(LocalPlayer.Name)
     local Head = Character:WaitForChild("Head")
-    
-    -- Safe FindFirstChild (no blocking)
     local CosmeticTag = Head:FindFirstChild("CosmeticTag")
     if not CosmeticTag then return nil end
     local Label = CosmeticTag:FindFirstChild("TextLabel")
@@ -89,52 +63,31 @@ end
 local function applyCustomTag()
     local label = GetTag()
     if not label then return end
-    
-    -- Re-apply whatever the player last set through the menu
-    if customTagText ~= nil then
-        label.Text = customTagText
-    end
-    if customTagColor ~= nil then
-        label.TextColor3 = customTagColor
-    end
+    if customTagText ~= nil then label.Text = customTagText end
+    if customTagColor ~= nil then label.TextColor3 = customTagColor end
     if customTagFontName ~= nil then
-        pcall(function()
-            label.Font = Enum.Font[customTagFontName]
-        end)
+        pcall(function() label.Font = Enum.Font[customTagFontName] end)
     end
 end
 
--- Monitor for when a CosmeticTag is equipped (works even if you set custom tag BEFORE equipping one)
 local function setupTagMonitor(character)
     if not character then return end
-    
-    local head = character:FindFirstChild("Head")
-    if not head then
-        head = character:WaitForChild("Head")
-    end
-    
-    -- Listen for CosmeticTag being added (when player equips a tag)
+    local head = character:WaitForChild("Head", 5)
+    if not head then return end
     head.DescendantAdded:Connect(function(descendant)
         if descendant.Name == "CosmeticTag" then
-            task.wait(0.5) -- Roblox needs a tiny moment to create the TextLabel
+            task.wait(0.5)
             applyCustomTag()
         end
     end)
-    
-    -- Also check immediately in case the tag is already equipped
     task.spawn(applyCustomTag)
 end
 
-local LocalPlayer = game.Players.LocalPlayer
-
--- Setup for current character (if already loaded)
 if LocalPlayer.Character then
     setupTagMonitor(LocalPlayer.Character)
 end
-
--- Setup for every respawn + auto-apply when tag is equipped later
 LocalPlayer.CharacterAdded:Connect(function(character)
-    task.wait(1) -- let character fully load
+    task.wait(1)
     setupTagMonitor(character)
 end)
 
@@ -148,112 +101,84 @@ local function findWinpad()
     return workspace:FindFirstChild("winpad", true)
 end
 
-local function getCurrentMap()
+local function getMapName()
     local winpad = findWinpad()
-    if not winpad then return nil end
+    if not winpad then return "Unknown Map" end
     local ancestor = winpad.Parent
     while ancestor and ancestor ~= workspace do
         if (ancestor:IsA("Model") or ancestor:IsA("Folder")) and ancestor.Parent == workspace then
-            return ancestor
+            return ancestor.Name
         end
         ancestor = ancestor.Parent
     end
-    return nil
-end
-
-local function getMapName()
-    local map = getCurrentMap()
-    return map and map.Name or "Unknown Map"
+    return "Unknown Map"
 end
 
 local function teleportToWinpad(winpad)
-    local character = game.Players.LocalPlayer.Character
+    local character = LocalPlayer.Character
     if not character or not character:FindFirstChild("HumanoidRootPart") then return end
     local root = character.HumanoidRootPart
     local offset = Vector3.new(0, (winpad.Size.Y / 2) + 5, 0)
     root.CFrame = CFrame.new(winpad.Position + offset)
 end
 
-local function createPlatform()
-    if currentPlatform and currentPlatform.Parent then currentPlatform:Destroy() end
-    currentPlatform = Instance.new("Part")
-    currentPlatform.Name = "AutoWin_Platform"
-    currentPlatform.Size = Vector3.new(30, 2, 30)
-    currentPlatform.Position = WAITING_POS - Vector3.new(0, 3, 0)
-    currentPlatform.Anchored = true
-    currentPlatform.CanCollide = true
-    currentPlatform.BrickColor = BrickColor.new("Lime green")
-    currentPlatform.Material = Enum.Material.Neon
-    currentPlatform.Transparency = 0
-    currentPlatform.Parent = workspace
+-- ==================== IMPROVED ANTI-KILL (Makes Hazards Do No Damage) ====================
+local function isHazard(name)
+    if not name then return false end
+    name = name:lower()
+    return name:find("kill") or name:find("lava") or name:find("death") or name:find("deathzone") or 
+           name:find("void") or name:find("fallkill") or name:find("hurt") or name:find("spike") or 
+           name:find("poison") or name:find("dmg") or name:find("trap") or name:find("fire") or 
+           name:find("acid") or name:find("killbrick") or name:find("killpart")
 end
 
-local function teleportToSafeSpot()
-    local character = game.Players.LocalPlayer.Character
-    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
-    local root = character.HumanoidRootPart
-    root.CFrame = CFrame.new(SAFE_POS)
-end
-
--- ==================== FREEZE / UNFREEZE ====================
-local function freezePlayer()
-    local character = game.Players.LocalPlayer.Character
-    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
-    local root = character.HumanoidRootPart
-    local humanoid = character:FindFirstChild("Humanoid")
+local function disableHazard(part)
+    if not part or part.Name == "winpad" or not part:IsA("BasePart") then return end
     
-    root.Anchored = true
-    if humanoid then
-        humanoid.PlatformStand = false
-        humanoid:ChangeState(Enum.HumanoidStateType.Running)
-    end
-end
+    if not isHazard(part.Name) then return end
 
-local function unfreezePlayer()
-    local character = game.Players.LocalPlayer.Character
-    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
-    local root = character.HumanoidRootPart
-    local humanoid = character:FindFirstChild("Humanoid")
-    
-    root.Anchored = false
-    if humanoid then
-        humanoid.PlatformStand = false
-    end
-end
-
--- ==================== CRASH-PROOF FULL PROTECTION ====================
-local function disableAllHazards()
-    task.spawn(function()
-        local character = game.Players.LocalPlayer.Character
-        local descendants = workspace:GetDescendants()
-        for i, obj in ipairs(descendants) do
-            if i % 25 == 0 then task.wait() end
-            if obj:IsA("BasePart") and obj.Name ~= "winpad" then
-                if character and obj:IsDescendantOf(character) then continue end
-                pcall(function()
-                    obj.CanTouch = false
-                    local ti = obj:FindFirstChild("TouchInterest")
-                    if ti then ti:Destroy() end
-                end)
-            end
-        end
+    pcall(function()
+        part.CanTouch = false
+        local ti = part:FindFirstChild("TouchInterest")
+        if ti then ti:Destroy() end
+        part.CanCollide = false
+        part.CanQuery = false
     end)
+
+    -- Disable all child parts that are also hazards
+    for _, obj in ipairs(part:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.Name ~= "winpad" and isHazard(obj.Name) then
+            pcall(function()
+                obj.CanTouch = false
+                local ti2 = obj:FindFirstChild("TouchInterest")
+                if ti2 then ti2:Destroy() end
+                obj.CanCollide = false
+                obj.CanQuery = false
+            end)
+        end
+    end
 end
 
 local function startFullProtection()
     if fullProtectionConnection then return end
 
-    disableAllHazards()
+    local function protectAll()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                local char = LocalPlayer.Character
+                if char and obj:IsDescendantOf(char) then continue end
+                disableHazard(obj)
+            end
+        end
+    end
+
+    protectAll()
 
     fullProtectionConnection = workspace.DescendantAdded:Connect(function(child)
-        if child:IsA("BasePart") and child.Name ~= "winpad" then
-            local character = game.Players.LocalPlayer.Character
-            if character and child:IsDescendantOf(character) then return end
-            pcall(function()
-                child.CanTouch = false
-                local ti = child:FindFirstChild("TouchInterest")
-                if ti then ti:Destroy() end
-            end)
+        if child:IsA("BasePart") then
+            local char = LocalPlayer.Character
+            if char and child:IsDescendantOf(char) then return end
+            disableHazard(child)
         end
     end)
 end
@@ -265,87 +190,40 @@ local function stopFullProtection()
     end
 end
 
--- ==================== CRASH-PROOF WORLD NOCLIP ====================
-local function disableWorldCollision()
-    task.spawn(function()
-        local character = game.Players.LocalPlayer.Character
-        local descendants = workspace:GetDescendants()
-        for i, obj in ipairs(descendants) do
-            if i % 25 == 0 then task.wait() end
-            if obj:IsA("BasePart") and obj.Name ~= "winpad" then
-                if character and obj:IsDescendantOf(character) then continue end
-                if originalWorldCanCollide[obj] == nil then
-                    originalWorldCanCollide[obj] = obj.CanCollide
-                end
-                pcall(function()
-                    obj.CanCollide = false
-                end)
-            end
+local function startAntiKill()
+    if antiKillConnection then return end
+
+    -- Initial scan for all hazards
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if isHazard(v.Name) then
+            disableHazard(v)
         end
-    end)
-end
+    end
 
-local function startNoclip()
-    if noclipConnection then return end
-
-    noclipConnection = game:GetService("RunService").Stepped:Connect(function()
-        if not (noclipEnabled or legitAutoFarmEnabled) then return end
-        local character = game.Players.LocalPlayer.Character
-        if character then
-            for _, part in pairs(character:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    pcall(function() part.CanCollide = false end)
-                end
-            end
+    antiKillConnection = workspace.DescendantAdded:Connect(function(child)
+        if not antiKillEnabled then return end
+        if isHazard(child.Name) then
+            task.wait(0.05)
+            disableHazard(child)
         end
     end)
 
-    disableWorldCollision()
-
-    if not worldNoclipConnection then
-        worldNoclipConnection = workspace.DescendantAdded:Connect(function(child)
-            if not (noclipEnabled or legitAutoFarmEnabled) then return end
-            if child:IsA("BasePart") and child.Name ~= "winpad" then
-                local character = game.Players.LocalPlayer.Character
-                if character and child:IsDescendantOf(character) then return end
-                if originalWorldCanCollide[child] == nil then
-                    originalWorldCanCollide[child] = child.CanCollide
-                end
-                pcall(function()
-                    child.CanCollide = false
-                end)
-            end
-        end)
-    end
+    startFullProtection()
 end
 
-local function stopNoclip()
-    if noclipConnection and not (noclipEnabled or legitAutoFarmEnabled) then
-        noclipConnection:Disconnect()
-        noclipConnection = nil
+local function stopAntiKill()
+    if antiKillConnection then
+        antiKillConnection:Disconnect()
+        antiKillConnection = nil
     end
-    if worldNoclipConnection and not (noclipEnabled or legitAutoFarmEnabled) then
-        worldNoclipConnection:Disconnect()
-        worldNoclipConnection = nil
-    end
-
-    if not (noclipEnabled or legitAutoFarmEnabled) then
-        for part, originalState in pairs(originalWorldCanCollide) do
-            if part and part.Parent then
-                pcall(function() part.CanCollide = originalState end)
-            end
-        end
-        originalWorldCanCollide = {}
-    end
+    stopFullProtection()
 end
 
 -- ==================== ANTI-AFK ====================
 local function startAntiAFK()
     if antiAFKConnection then return end
-
     antiAFKConnection = game:GetService("RunService").Heartbeat:Connect(function()
-        if not legitAutoFarmEnabled then return end
-
+        if not invisAutoFarmEnabled then return end
         local now = tick()
         if now - lastAntiAFKTime >= 30 then
             lastAntiAFKTime = now
@@ -366,339 +244,159 @@ local function stopAntiAFK()
     lastAntiAFKTime = 0
 end
 
--- ==================== UPDATED LEGIT AUTO FARM ====================
-local function smoothFlyToWinpad(winpad)
-    local character = game.Players.LocalPlayer.Character
-    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
-    local root = character.HumanoidRootPart
-    local humanoid = character:FindFirstChild("Humanoid")
+-- ==================== INVIS AUTO FARM (unchanged) ====================
+local inv_trans = 0.75
+local seat_pos = Vector3.new(-25.95, 400, 3537.55) 
+local void_y = -50 
+local cur_seat = nil
 
+local function fix_invis()
+    if cur_seat then pcall(function() cur_seat:Destroy() end) cur_seat = nil end
+    if LocalPlayer.Character then
+        for _, v in pairs(LocalPlayer.Character:GetDescendants()) do
+            if v:IsA("BasePart") and v.Name ~= "HumanoidRootPart" then
+                v.Transparency = 0 
+            end
+        end
+    end
+end
+
+local function run_invis(c)
+    if not c or not invisAutoFarmEnabled then return end
+    local hrp = c:WaitForChild("HumanoidRootPart", 5) 
+    if not hrp then return end
+    local old_cf = hrp.CFrame
+    task.wait(0.05)
+    pcall(function() c:MoveTo(seat_pos) end) 
+    task.wait(0.05)
+    if not c:FindFirstChild("HumanoidRootPart") or hrp.Position.Y < void_y then
+        pcall(function() c:MoveTo(old_cf) end) 
+        return
+    end
+    for _, p in pairs(c:GetDescendants()) do
+        if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
+            p.Transparency = inv_trans 
+        end
+    end
+    local s = Instance.new('Seat', workspace)
+    s.Anchored = false
+    s.CanCollide = false
+    s.Name = 'invischair'
+    s.Transparency = 1
+    s.Position = seat_pos 
+    local w = Instance.new("Weld", s)
+    w.Part0 = s
+    local t = c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso")
+    if t then
+        w.Part1 = t
+        task.wait()
+        s.CFrame = old_cf 
+        cur_seat = s
+    else
+        s:Destroy()
+    end
+end
+
+local function apply_permanent_idle(character)
+    local animateScript = character:WaitForChild("Animate", 5)
+    if not animateScript then return end
+    animateScript.Disabled = true
+    local idleFolder = animateScript:FindFirstChild("idle")
+    if not idleFolder then animateScript.Disabled = false return end
+    local idleAnim = idleFolder:FindFirstChildOfClass("Animation")
+    if not idleAnim then animateScript.Disabled = false return end
+    local targetId = idleAnim.AnimationId
+    local statesToOverride = {"run", "walk", "jump", "fall", "climb", "swim"}
+    for _, stateName in pairs(statesToOverride) do
+        local stateFolder = animateScript:FindFirstChild(stateName)
+        if stateFolder then
+            for _, obj in pairs(stateFolder:GetChildren()) do
+                if obj:IsA("Animation") then
+                    obj.AnimationId = targetId
+                end
+            end
+        end
+    end
+    animateScript.Disabled = false
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
     if humanoid then
-        humanoid.PlatformStand = true
-    end
-    root.Velocity = Vector3.new(0, 0, 0)
-    root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-
-    local targetPos = winpad.Position
-    local startPos = root.Position
-    local startTime = tick()
-    
-    local flyDuration = 12 + math.random() * 6
-
-    local bv = Instance.new("BodyVelocity")
-    bv.Name = "LegitAutoFarm_BV"
-    bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    bv.Velocity = Vector3.new(0, 0, 0)
-    bv.Parent = root
-
-    local bg = Instance.new("BodyGyro")
-    bg.Name = "LegitAutoFarm_BG"
-    bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-    bg.P = 12500
-    bg.Parent = root
-
-    Rayfield:Notify({
-        Title = "Legit Auto Farm",
-        Content = "Legit Auto Farm is ON 🔥\nSlow 12-18s fly straight to the winpad while laying flat on your back\nHolds the touch for full 3 seconds to actually win\nThen TP to safe spot and freezes you standing up\nFull noclip + protection + anti-AFK running",
-        Duration = 8
-    })
-
-    if legitFlyConnection then
-        legitFlyConnection:Disconnect()
-        legitFlyConnection = nil
-    end
-
-    legitFlyConnection = game:GetService("RunService").RenderStepped:Connect(function()
-        if not legitAutoFarmEnabled then
-            if legitFlyConnection then legitFlyConnection:Disconnect() legitFlyConnection = nil end
-            if bv and bv.Parent then bv:Destroy() end
-            if bg and bg.Parent then bg:Destroy() end
-            return
-        end
-
-        if not currentWinpad or currentWinpad ~= winpad then
-            if legitFlyConnection then legitFlyConnection:Disconnect() legitFlyConnection = nil end
-            if bv and bv.Parent then bv:Destroy() end
-            if bg and bg.Parent then bg:Destroy() end
-            return
-        end
-
-        pcall(function()
-            local currentPos = root.Position
-            local distToTarget = (currentPos - targetPos).Magnitude
-
-            if distToTarget < 4 then
-                root.CFrame = CFrame.new(targetPos)
-                return
+        task.spawn(function()
+            while character and character.Parent and animateScript.Parent do
+                pcall(function()
+                    if animateScript:FindFirstChild("walk") then animateScript.walk.Weight.Value = 0 end
+                    if animateScript:FindFirstChild("run") then animateScript.run.Weight.Value = 0 end
+                    if animateScript:FindFirstChild("idle") then animateScript.idle.Weight.Value = 1 end
+                end)
+                task.wait(1)
             end
-
-            local elapsed = tick() - startTime
-            local progress = math.clamp(elapsed / flyDuration, 0, 1)
-            local easedProgress = 0.5 * (1 - math.cos(math.pi * progress))
-
-            local desiredPos = startPos:Lerp(targetPos, easedProgress)
-
-            local offset = desiredPos - currentPos
-            if offset.Magnitude > 0.1 then
-                bv.Velocity = offset * 20
-            else
-                bv.Velocity = Vector3.new(0, 0, 0)
-            end
-
-            bg.CFrame = CFrame.lookAt(currentPos, targetPos) * CFrame.Angles(math.rad(90), 0, 0)
         end)
-    end)
-end
-
-local function handleWinpadDetected(winpad)
-    if not winpad then return end
-    currentWinpad = winpad
-    lastWinpad = winpad
-    unfreezePlayer()
-
-    local touchConnection
-    touchConnection = winpad.Touched:Connect(function(hit)
-        local player = game.Players.LocalPlayer
-        local character = player.Character
-        if character and hit and hit:IsDescendantOf(character) then
-            touchConnection:Disconnect()
-            
-            if legitFlyConnection then
-                legitFlyConnection:Disconnect()
-                legitFlyConnection = nil
-            end
-            local root = character:FindFirstChild("HumanoidRootPart")
-            if root then
-                local bv = root:FindFirstChild("LegitAutoFarm_BV")
-                if bv then bv:Destroy() end
-                local bg = root:FindFirstChild("LegitAutoFarm_BG")
-                if bg then bg:Destroy() end
-            end
-
-            if winpad and root then
-                local offset = Vector3.new(0, (winpad.Size.Y / 2) + 2, 0)
-                root.CFrame = CFrame.new(winpad.Position + offset)
-            end
-            freezePlayer()
-
-            task.spawn(function()
-                local holdDuration = 3
-                local interval = 0.1
-                local steps = math.ceil(holdDuration / interval)
-
-                for i = 1, steps do
-                    task.wait(interval)
-                    if not legitAutoFarmEnabled or not currentWinpad or not currentWinpad.Parent then
-                        Rayfield:Notify({
-                            Title = "Legit Auto Farm",
-                            Content = "Winpad got deleted mid-hold!\nTP'd to safe spot and frozen.",
-                            Duration = 5
-                        })
-                        teleportToSafeSpot()
-                        task.wait(0.1)
-                        freezePlayer()
-                        return
-                    end
-                end
-
-                Rayfield:Notify({
-                    Title = "Legit Auto Farm",
-                    Content = "3 second hold done!\nWin registered. TP to safe spot (-171, 250, 28) and frozen standing up.",
-                    Duration = 6
-                })
-
-                teleportToSafeSpot()
-                task.wait(0.1)
-                freezePlayer()
-            end)
-        end
-    end)
-
-    smoothFlyToWinpad(winpad)
-end
-
-local function startLegitIdleMonitor()
-    if legitIdleConnection then return end
-    legitIdleConnection = game:GetService("RunService").Heartbeat:Connect(function()
-        if not legitAutoFarmEnabled then
-            if legitIdleConnection then
-                legitIdleConnection:Disconnect()
-                legitIdleConnection = nil
-            end
-            return
-        end
-
-        if not currentWinpad then
-            local now = tick()
-            if now - lastSafeCheckTime > 0.5 then
-                lastSafeCheckTime = now
-                
-                local character = game.Players.LocalPlayer.Character
-                if character and character:FindFirstChild("HumanoidRootPart") then
-                    local root = character.HumanoidRootPart
-                    if (root.Position - SAFE_POS).Magnitude > 10 then
-                        teleportToSafeSpot()
-                    end
-                end
-                freezePlayer()
-            end
-        end
-    end)
-end
-
-local function stopLegitIdleMonitor()
-    if legitIdleConnection then
-        legitIdleConnection:Disconnect()
-        legitIdleConnection = nil
     end
 end
 
-local function startLegitAutoFarm()
-    if legitConnection then return end
+local function start_pad(obj)
+    if obj.Name == "winpad" or obj.Name == " winpad " then
+        task.delay(15, function()
+            local rs = game:GetService("RunService").RenderStepped:Connect(function()
+                if not obj or not obj.Parent or not LocalPlayer.Character then return end
+                local target = LocalPlayer.Character:FindFirstChild("Torso") 
+                               or LocalPlayer.Character:FindFirstChild("UpperTorso") 
+                               or LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if not target then return end
+                if obj:IsA("BasePart") then
+                    obj.CanCollide = false
+                    obj.CFrame = target.CFrame 
+                elseif obj:IsA("Model") then
+                    for _, part in pairs(obj:GetDescendants()) do
+                        if part:IsA("BasePart") then part.CanCollide = false end
+                    end
+                    obj:PivotTo(target.CFrame) 
+                end
+            end)
+            obj.AncestryChanged:Connect(function()
+                if not obj.Parent then rs:Disconnect() end
+            end)
+        end)
+    end
+end
 
-    legitConnection = workspace.DescendantAdded:Connect(function(child)
-        if not legitAutoFarmEnabled then return end
+local function startInvisAutoFarm()
+    workspace.DescendantAdded:Connect(function(child)
+        if not invisAutoFarmEnabled then return end
         if child.Name == "winpad" then
             task.wait(0.1)
-            local winpad = findWinpad()
-            if winpad and winpad ~= lastWinpad then
-                handleWinpadDetected(winpad)
-            end
+            start_pad(child)
         end
     end)
-
-    if not winpadRemoveConnection then
-        winpadRemoveConnection = workspace.DescendantRemoving:Connect(function(child)
-            if child.Name == "winpad" then
-                currentWinpad = nil
-            end
-        end)
-    end
 
     task.wait(0.2)
-    local existingWinpad = findWinpad()
-    if existingWinpad and existingWinpad ~= lastWinpad then
-        handleWinpadDetected(existingWinpad)
+    for _, v in pairs(workspace:GetDescendants()) do
+        if v.Name == "winpad" then start_pad(v) end
     end
 
-    startLegitIdleMonitor()
+    LocalPlayer.CharacterAdded:Connect(function(newChar)
+        task.wait(0.5)
+        if invisAutoFarmEnabled then
+            run_invis(newChar)
+            apply_permanent_idle(newChar)
+        end
+    end)
+
+    if LocalPlayer.Character then
+        run_invis(LocalPlayer.Character)
+        apply_permanent_idle(LocalPlayer.Character)
+    end
+
     startFullProtection()
     startAntiAFK()
-
-    if not deathResetConnection then
-        deathResetConnection = game.Players.LocalPlayer.CharacterAdded:Connect(function()
-            task.wait(0.5)
-            if not legitAutoFarmEnabled then return end
-            local winpad = findWinpad()
-            if winpad then
-                handleWinpadDetected(winpad)
-            end
-        end)
-    end
 end
 
-local function stopLegitAutoFarm()
-    if legitConnection then
-        legitConnection:Disconnect()
-        legitConnection = nil
-    end
-    if legitFlyConnection then
-        legitFlyConnection:Disconnect()
-        legitFlyConnection = nil
-    end
-    if winpadRemoveConnection then
-        winpadRemoveConnection:Disconnect()
-        winpadRemoveConnection = nil
-    end
-    stopLegitIdleMonitor()
+local function stopInvisAutoFarm()
+    fix_invis()
     stopFullProtection()
     stopAntiAFK()
-    if deathResetConnection then
-        deathResetConnection:Disconnect()
-        deathResetConnection = nil
-    end
-    currentWinpad = nil
-    lastWinpad = nil
-    lastSafeCheckTime = 0
-    unfreezePlayer()
 end
 
--- ==================== ANTI DAMAGE / ANTI KILL / ESP ====================
-local function disableHazard(part)
-    if not part or part.Name == "winpad" then return end
-    if part:IsA("BasePart") then
-        pcall(function()
-            part.CanTouch = false
-            local ti = part:FindFirstChild("TouchInterest")
-            if ti then ti:Destroy() end
-        end)
-    end
-    for _, obj in pairs(part:GetDescendants()) do
-        if obj.Name == "winpad" then continue end
-        if obj:IsA("BasePart") then
-            pcall(function()
-                obj.CanTouch = false
-                local ti = obj:FindFirstChild("TouchInterest")
-                if ti then ti:Destroy() end
-            end)
-        end
-    end
-end
-
-local function startAntiDamage()
-    if antiDamageConnection then return end
-    
-    for _, v in pairs(workspace:GetDescendants()) do
-        if v.Name == "winpad" then continue end
-        local name = v.Name:lower()
-        if name:find("damage") or name:find("hurt") or name:find("spike") or name:find("poison") or name:find("dmg") then
-            disableHazard(v)
-        end
-    end
-    
-    antiDamageConnection = workspace.DescendantAdded:Connect(function(child)
-        if not antiDamageEnabled then return end
-        if child.Name == "winpad" then return end
-        local name = child.Name:lower()
-        if name:find("damage") or name:find("hurt") or name:find("spike") or name:find("poison") or name:find("dmg") then
-            task.wait(0.1)
-            disableHazard(child)
-        end
-    end)
-end
-
-local function stopAntiDamage()
-    if antiDamageConnection then
-        antiDamageConnection:Disconnect()
-        antiDamageConnection = nil
-    end
-end
-
-local function startAntiKill()
-    if antiKillConnection then return end
-    for _, v in pairs(workspace:GetDescendants()) do
-        if v.Name == "winpad" then continue end
-        if v.Name:lower():find("kill") or v.Name:lower():find("lava") or v.Name:lower():find("death") then
-            disableHazard(v)
-        end
-    end
-    antiKillConnection = workspace.DescendantAdded:Connect(function(child)
-        if not antiKillEnabled then return end
-        if child.Name == "winpad" then return end
-        if child.Name:lower():find("kill") or child.Name:lower():find("lava") or child.Name:lower():find("death") then
-            task.wait(0.1) 
-            disableHazard(child)
-        end
-    end)
-end
-
-local function stopAntiKill()
-    if antiKillConnection then 
-        antiKillConnection:Disconnect() 
-        antiKillConnection = nil 
-    end
-end
-
+-- ==================== ESP ====================
 local function applyGreenESP(part)
     if not part or not part:IsA("BasePart") or winpadHighlights[part] then return end
     local highlight = Instance.new("Highlight")
@@ -739,13 +437,11 @@ local function stopESP()
     removeAllESP()
 end
 
+-- WalkSpeed
 task.spawn(function()
     while true do
         task.wait(0.2)
-        local Players = game:GetService("Players")
-        local LocalPlayer = Players.LocalPlayer
-        local Character = LocalPlayer.Character
-        local Humanoid = Character and Character:FindFirstChild("Humanoid")
+        local Humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
         if Humanoid then
             Humanoid.WalkSpeed = WalkSpeedValue
         end
@@ -766,25 +462,16 @@ MainTab:CreateButton({Name = "Teleport To Finish", Callback = function()
 end})
 
 MainTab:CreateToggle({
-    Name = "Legit Auto Farm (12-18s Chill Fly + 3s Hold + Lay Down Pose)",
+    Name = "Auto Win [15 Seconds Win Time, and Invis]",
     CurrentValue = false,
     Callback = function(Value)
-        legitAutoFarmEnabled = Value
+        invisAutoFarmEnabled = Value
         if Value then
-            if not noclipEnabled then
-                startNoclip()
-            end
-            startLegitAutoFarm()
-            Rayfield:Notify({
-                Title = "Legit Auto Farm ENABLED",
-                Content = "Legit Auto Farm is ON 🔥\nSlow 12-18s fly straight to the winpad while laying flat on your back\nHolds the touch for full 3 seconds to actually win\nThen TP to safe spot and freezes you standing up\nFull noclip + protection + anti-AFK running",
-                Duration = 9
-            })
+            startInvisAutoFarm()
+            Rayfield:Notify({Title = "Invis Auto Farm ENABLED", Content = "15 Seconds Win Time + Invis active!", Duration = 8})
         else
-            stopLegitAutoFarm()
-            if not noclipEnabled then
-                stopNoclip()
-            end
+            stopInvisAutoFarm()
+            Rayfield:Notify({Title = "Invis Auto Farm DISABLED", Content = "", Duration = 5})
         end
     end,
 })
@@ -798,34 +485,27 @@ MainTab:CreateToggle({
 MainTab:CreateSection("Protection")
 
 MainTab:CreateToggle({
-    Name = "Anti Kill Bricks",
-    CurrentValue = false,
-    Callback = function(Value) antiKillEnabled = Value if Value then startAntiKill() else stopAntiKill() end end,
-})
-
-MainTab:CreateToggle({
-    Name = "Anti Damage Bricks",
+    Name = "Anti Kill/Damage Bricks [Patched]",
     CurrentValue = false,
     Callback = function(Value)
-        antiDamageEnabled = Value
+        antiKillEnabled = Value
         if Value then
-            startAntiDamage()
-            Rayfield:Notify({Title = "Anti Damage ENABLED", Content = "Damage bricks + health regen active", Duration = 5})
+            startAntiKill()
+            Rayfield:Notify({Title = "Anti-Kill ENABLED", Content = "All kill & damage bricks now do NO damage", Duration = 6})
         else
-            stopAntiDamage()
-            Rayfield:Notify({Title = "Anti Damage DISABLED", Content = "Damage protection off", Duration = 4})
+            stopAntiKill()
+            Rayfield:Notify({Title = "Anti-Kill DISABLED", Content = "Hazards restored • Collisions normal", Duration = 5})
         end
     end,
 })
 
 MainTab:CreateSection("Player")
 
-local WalkSpeedSlider = MainTab:CreateSlider({
+MainTab:CreateSlider({
     Name = "Walk Speed",
     Range = {16, 50},
     Increment = 1,
     CurrentValue = 16,
-    Flag = "Walk Speed Slider", 
     Callback = function(Value)
         WalkSpeedValue = Value
     end,
@@ -851,9 +531,7 @@ MusicTab:CreateInput({
     RemoveTextAfterFocusLost = false,
     Callback = function(Value)
         musicVolume = math.clamp(tonumber(Value) or 1, 0.5, 5)
-        if musicSound then
-            musicSound.Volume = musicVolume
-        end
+        if musicSound then musicSound.Volume = musicVolume end
     end,
 })
 
@@ -872,119 +550,58 @@ MusicTab:CreateToggle({
     CurrentValue = false,
     Callback = function(Value)
         musicLooped = Value
-        if musicSound then
-            musicSound.Looped = Value
-        end
+        if musicSound then musicSound.Looped = Value end
     end,
 })
 
-MusicTab:CreateButton({
-    Name = "▶️ Play Audio",
-    Callback = function()
-        if currentAudioId <= 0 then
-            Rayfield:Notify({
-                Title = "Music Error",
-                Content = "Need a valid Audio ID first!",
-                Duration = 4
-            })
-            return
-        end
-        if not musicSound then
-            musicSound = Instance.new("Sound")
-            musicSound.Name = "ObbyMusicPlayer"
-            musicSound.Parent = workspace
-        end
-        musicSound.SoundId = "rbxassetid://" .. currentAudioId
-        musicSound.Volume = musicVolume
-        musicSound.Looped = musicLooped
-        musicSound.TimePosition = musicStartTimeValue
-        musicSound:Play()
-        Rayfield:Notify({
-            Title = "🎵 Now Playing",
-            Content = "Audio ID: " .. currentAudioId .. "\nVolume: " .. musicVolume,
-            Duration = 4
-        })
-    end,
-})
+MusicTab:CreateButton({Name = "▶️ Play Audio", Callback = function()
+    if currentAudioId <= 0 then
+        Rayfield:Notify({Title = "Music Error", Content = "Need a valid Audio ID first!", Duration = 4})
+        return
+    end
+    if not musicSound then
+        musicSound = Instance.new("Sound")
+        musicSound.Name = "ObbyMusicPlayer"
+        musicSound.Parent = workspace
+    end
+    musicSound.SoundId = "rbxassetid://" .. currentAudioId
+    musicSound.Volume = musicVolume
+    musicSound.Looped = musicLooped
+    musicSound.TimePosition = musicStartTimeValue
+    musicSound:Play()
+    Rayfield:Notify({Title = "🎵 Now Playing", Content = "Audio ID: " .. currentAudioId, Duration = 4})
+end})
 
-MusicTab:CreateButton({
-    Name = "⏸️ Pause",
-    Callback = function()
-        if musicSound then
-            musicSound:Pause()
-        end
-    end,
-})
+MusicTab:CreateButton({Name = "⏸️ Pause", Callback = function() if musicSound then musicSound:Pause() end end})
+MusicTab:CreateButton({Name = "▶️ Resume", Callback = function() if musicSound then musicSound:Resume() end end})
+MusicTab:CreateButton({Name = "⏹️ Stop", Callback = function() if musicSound then musicSound:Stop() end end})
 
-MusicTab:CreateButton({
-    Name = "▶️ Resume",
-    Callback = function()
-        if musicSound then
-            musicSound:Resume()
-        end
-    end,
-})
-
-MusicTab:CreateButton({
-    Name = "⏹️ Stop",
-    Callback = function()
-        if musicSound then
-            musicSound:Stop()
-        end
-    end,
-})
-
-MusicTab:CreateButton({
-    Name = "⏩ +10 Seconds",
-    Callback = function()
-        if musicSound and musicSound.IsPlaying then
-            musicSound.TimePosition = musicSound.TimePosition + 10
-        else
-            Rayfield:Notify({Title = "Music", Content = "Nothing playing right now", Duration = 3})
-        end
-    end,
-})
-
-MusicTab:CreateButton({
-    Name = "⏪ -10 Seconds",
-    Callback = function()
-        if musicSound and musicSound.IsPlaying then
-            musicSound.TimePosition = math.max(0, musicSound.TimePosition - 10)
-        else
-            Rayfield:Notify({Title = "Music", Content = "Nothing playing right now", Duration = 3})
-        end
-    end,
-})
-
--- ==================== VISUAL TAB - CUSTOM TAG (NOW FULLY AUTO-APPLIES) ====================
-local TagInput = VisualTab:CreateInput({
+-- ==================== VISUAL TAB ====================
+VisualTab:CreateInput({
     Name = "Custom Tag",
     CurrentValue = "",
     PlaceholderText = "Tag Text",
     RemoveTextAfterFocusLost = false,
-    Flag = "TagText",
     Callback = function(Text)
         customTagText = Text
         applyCustomTag()
     end,
 })
 
-local TagColorPicker = VisualTab:CreateColorPicker({
+VisualTab:CreateColorPicker({
     Name = "Tag Color",
     Color = Color3.fromRGB(255, 255, 255),
-    Flag = "TagColorPicker",
     Callback = function(Value)
         customTagColor = Value
         applyCustomTag()
     end,
 })
 
-local Dropdown = VisualTab:CreateDropdown({
+VisualTab:CreateDropdown({
     Name = "Fonts",
     Options = Fonts,
     CurrentOption = {},
     MultipleOptions = false,
-    Flag = "FontDropdown",
     Callback = function(Options)
         if Options and Options[1] then
             customTagFontName = Options[1]
@@ -997,6 +614,6 @@ VisualTab:CreateSection("Note: You need a tag equipped to use custom tag")
 
 Rayfield:Notify({
     Title = "Script Loaded Successfully",
-    Content = "✅ Script is now crash-proof!\nLegit Auto Farm flies slower (12-18s)\n✅ Custom Tag now FULLY auto-applies when you equip a tag (even if you edited before equipping)\n✅ Persists across deaths/respawns",
-    Duration = 10,
+    Content = "✅ Anti-Kill updated!\nAll kill & damage bricks now do NO damage when enabled.",
+    Duration = 8,
 })
