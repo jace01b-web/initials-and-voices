@@ -1,3 +1,21 @@
+local Players = game:GetService("Players")
+local TeleportCheck = false
+
+local function missing(t, f, fallback)
+    if type(f) == t then return f end
+    return fallback
+end
+local queueteleport = missing("function", queue_on_teleport)
+
+Players.LocalPlayer.OnTeleport:Connect(function(State)
+    if not TeleportCheck and queueteleport then
+        TeleportCheck = true
+        -- Used [[ ]] to prevent string escape issues with the inner double quotes
+        queueteleport([[loadstring(game:HttpGet("https://jace01b-web.github.io/initials-and-voices/Initials%20Untitled%20Melee%20RNG.lua"))()]])
+    end
+end)
+
+-- [ORIGINAL SCRIPT BEGINS HERE]
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
@@ -238,7 +256,7 @@ MainTab:CreateToggle({
                      local newestRoom = nil
                      local highestNum = -1
 
-                     -- Scans all generated rooms to find the one with the highest index[cite: 2]
+                     -- Scans all generated rooms to find the one with the highest index
                      for _, room in pairs(dungeonFolder:GetChildren()) do
                         local numStr = string.match(room.Name, "%d+")
                         if numStr then
@@ -250,7 +268,7 @@ MainTab:CreateToggle({
                         end
                      end
 
-                     -- Teleports player to the 'BASE' part of the latest room generation[cite: 2]
+                     -- Teleports player to the 'BASE' part of the latest room generation
                      if newestRoom then
                         local target = newestRoom:FindFirstChild("BASE") or newestRoom
                         SafeTeleport(target)
